@@ -1,5 +1,4 @@
 import pytest
-import oqs
 from crypto.kem import (
     generate_keypair,
     encapsulate,
@@ -25,6 +24,10 @@ class TestAvailability:
     def test_ml_kem_768_is_available(self):
         assert is_available(), f"{KEM_ALGORITHM} non disponible dans liboqs"
 
+    def test_kem_info_reports_selected_algorithm(self):
+        info = kem_info()
+        assert info["algorithm"] == KEM_ALGORITHM
+
     def test_kem_info_returns_correct_sizes(self):
         info = kem_info()
         assert info["public_key_bytes"] == PK_SIZE
@@ -32,6 +35,17 @@ class TestAvailability:
         assert info["ciphertext_bytes"] == CT_SIZE
         assert info["shared_secret_bytes"] == SS_SIZE
         assert info["claimed_nist_level"] == 3
+
+    def test_kem_info_contains_expected_keys(self):
+        info = kem_info()
+        assert set(info.keys()) == {
+            "algorithm",
+            "claimed_nist_level",
+            "public_key_bytes",
+            "secret_key_bytes",
+            "ciphertext_bytes",
+            "shared_secret_bytes",
+        }
 
 # Key generation
 
@@ -61,6 +75,15 @@ class TestGenerateKeypair:
         hex_str = kp.public_key_hex()
         assert isinstance(hex_str, str)
         assert len(hex_str) == PK_SIZE * 2
+        assert hex_str == kp.public_key.hex()
+
+    def test_keypair_repr_hides_secret_key_material(self):
+        kp = generate_keypair()
+        text = repr(kp)
+        assert "KEMKeyPair(" in text
+        assert "sk[" in text
+        assert "***" in text
+        assert kp.secret_key.hex()[:16] not in text
 
 
 # Encapsulation
@@ -78,6 +101,14 @@ class TestEncapsulate:
         assert len(result.ciphertext) == CT_SIZE
         assert len(result.shared_secret) == SS_SIZE
 
+    def test_result_repr_contains_ciphertext_metadata(self, bob):
+        result = encapsulate(bob.public_key)
+        text = repr(result)
+        assert "KEMEncapsulationResult(" in text
+        assert f"ct[{CT_SIZE}B]" in text
+        assert result.ciphertext.hex()[:16] in text
+        assert result.shared_secret.hex() in text
+
     def test_shared_secret_not_zero(self, bob):
         result = encapsulate(bob.public_key)
         assert result.shared_secret != bytes(SS_SIZE)
@@ -92,6 +123,10 @@ class TestEncapsulate:
     def test_invalid_key_size_raises_value_error(self):
         with pytest.raises(ValueError, match="Taille de clé publique incorrecte"):
             encapsulate(b"trop_court")
+
+    def test_public_key_off_by_one_raises_value_error(self, bob):
+        with pytest.raises(ValueError, match=f"attendu {PK_SIZE}"):
+            encapsulate(bob.public_key[:-1])
 
     def test_empty_key_raises_value_error(self):
         with pytest.raises(ValueError):
@@ -115,14 +150,30 @@ class TestDecapsulate:
         ss = decapsulate(bob.secret_key, result.ciphertext)
         assert len(ss) == SS_SIZE
 
+    def test_decapsulation_is_deterministic_for_same_inputs(self, bob):
+        result = encapsulate(bob.public_key)
+        s1 = decapsulate(bob.secret_key, result.ciphertext)
+        s2 = decapsulate(bob.secret_key, result.ciphertext)
+        assert s1 == s2 == result.shared_secret
+
     def test_invalid_secret_key_raises_value_error(self, bob):
         result = encapsulate(bob.public_key)
         with pytest.raises(ValueError, match="Taille de clé secrète incorrecte"):
             decapsulate(b"trop_court", result.ciphertext)
 
+    def test_secret_key_off_by_one_raises_value_error(self, bob):
+        result = encapsulate(bob.public_key)
+        with pytest.raises(ValueError, match=f"attendu {SK_SIZE}"):
+            decapsulate(bob.secret_key[:-1], result.ciphertext)
+
     def test_invalid_ciphertext_raises_value_error(self, bob):
         with pytest.raises(ValueError, match="Taille de ciphertext incorrecte"):
             decapsulate(bob.secret_key, b"trop_court")
+
+    def test_ciphertext_off_by_one_raises_value_error(self, bob):
+        result = encapsulate(bob.public_key)
+        with pytest.raises(ValueError, match=f"attendu {CT_SIZE}"):
+            decapsulate(bob.secret_key, result.ciphertext[:-1])
 
 
 # Main handshake
@@ -154,6 +205,11 @@ class TestAliceBobHandshake:
         bob = generate_keypair()
         secrets = [encapsulate(bob.public_key).shared_secret for _ in range(5)]
         assert len(set(secrets)) == 5
+
+    def test_ciphertexts_are_all_distinct_across_sessions(self):
+        bob = generate_keypair()
+        ciphertexts = [encapsulate(bob.public_key).ciphertext for _ in range(5)]
+        assert len(set(ciphertexts)) == 5
 
     def test_wrong_secret_key_gives_wrong_secret(self):
         """
@@ -202,6 +258,11 @@ class TestKEMRatchet:
         new_pk, _ = kem_ratchet_step(bob.public_key)
         assert len(new_pk) == PK_SIZE
 
+    def test_kem_ratchet_generates_fresh_public_key(self):
+        bob = generate_keypair()
+        new_pk, _ = kem_ratchet_step(bob.public_key)
+        assert new_pk != bob.public_key
+
     def test_kem_ratchet_shared_secret_correct_size(self):
         bob = generate_keypair()
         _, secret = kem_ratchet_step(bob.public_key)
@@ -213,6 +274,10 @@ class TestKEMRatchet:
         _, s2 = kem_ratchet_step(bob.public_key)
         assert s1 != s2
 
+    def test_kem_ratchet_invalid_public_key_raises_value_error(self):
+        with pytest.raises(ValueError, match="Taille de clé publique incorrecte"):
+            kem_ratchet_step(b"invalid")
+
 
 # ===========================================================================
 # SCRIPT DE DÉMONSTRATION
@@ -223,28 +288,28 @@ if __name__ == "__main__":
     print("  ML-KEM-768 — Protocole QSMP")
     print("=" * 60)
 
-    print("\n📐 Paramètres :")
+    print("\n Paramètres :")
     for k, v in kem_info().items():
         print(f"   {k:<28} {v}")
 
-    print(f"\n✅ ML-KEM-768 disponible : {is_available()}")
+    print(f"\nML-KEM-768 disponible : {is_available()}")
 
-    print("\n🔑 Bob génère ses clés...")
+    print("\n Bob génère ses clés...")
     bob = generate_keypair()
     print(f"   {bob}")
 
-    print("\n📦 Alice encapsule un secret...")
+    print("\n Alice encapsule un secret...")
     alice_result = encapsulate(bob.public_key)
     print(f"   {alice_result}")
 
-    print("\n🔓 Bob décapsule...")
+    print("\n Bob décapsule...")
     bob_secret = decapsulate(bob.secret_key, alice_result.ciphertext)
     print(f"   Secret Bob : {bob_secret.hex()}")
 
     match = alice_result.shared_secret == bob_secret
-    print(f"\n{'✅ Secrets identiques' if match else '❌ ERREUR : secrets différents'}")
+    print(f"\n{' Secrets identiques' if match else ' ERREUR : secrets différents'}")
 
-    print("\n🔄 KEM Ratchet — 3 tours...")
+    print("\n KEM Ratchet — 3 tours...")
     current_bob_pk = bob.public_key
     for i in range(1, 4):
         new_pk, ratchet_secret = kem_ratchet_step(current_bob_pk)

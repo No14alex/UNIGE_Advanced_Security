@@ -9,9 +9,43 @@ ML - KEM - 768 protocol (Kyber)
 '''
 
 from dataclasses import dataclass
-import os
-import oqs
-KEM_Algo = "ML-KEM-768"
+from importlib import util as importlib_util
+from pathlib import Path
+import sysconfig
+
+
+def _load_oqs_module():
+    """
+    Charge le bon module OQS.
+
+    Dans cet environnement, un package tiers nommé ``oqs`` peut écraser
+    l'entrée attendue de ``liboqs-python``. On tente donc d'abord l'import
+    normal, puis on recharge explicitement ``site-packages/oqs/oqs.py`` si
+    l'API liboqs attendue n'est pas présente.
+    """
+    import oqs as imported_oqs
+
+    if hasattr(imported_oqs, "KeyEncapsulation"):
+        return imported_oqs
+
+    purelib = Path(sysconfig.get_paths()["purelib"])
+    candidate = purelib / "oqs" / "oqs.py"
+    if not candidate.exists():
+        raise ImportError(
+            "liboqs-python introuvable: le module 'oqs' importé n'expose pas "
+            "KeyEncapsulation et aucun fallback n'a été trouvé."
+        )
+
+    spec = importlib_util.spec_from_file_location("liboqs_python_compat", candidate)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Impossible de charger le module OQS depuis {candidate}")
+
+    oqs_module = importlib_util.module_from_spec(spec)
+    spec.loader.exec_module(oqs_module)
+    return oqs_module
+
+
+oqs = _load_oqs_module()
 
 
 # ML-KEM-768 = NIST Level 3 (recommandé pour production)
