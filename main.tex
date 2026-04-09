@@ -75,6 +75,125 @@
                   handshake latency and signature sizes for classical and post-quantum.
       \end{itemize}
 
+      \subsection{Definition of the algorithms used}
+      This protocol combines post-quantum public-key primitives with classical
+      symmetric cryptography. The objective is to replace the parts of a
+      messaging protocol that are vulnerable to quantum computers, while keeping
+      efficient symmetric protection for actual message contents.
+
+      \subsubsection{ML-KEM}
+      ML-KEM is the \textbf{Module-Lattice-Based Key Encapsulation Mechanism}
+      standardized by NIST in FIPS 203. It is the post-quantum replacement for
+      classical key exchange mechanisms such as Diffie--Hellman or X25519.
+
+      Its role in the protocol is to let two parties derive a shared secret over
+      an untrusted network without exposing that secret to an eavesdropper. At a
+      high level, ML-KEM works in three steps:
+      \begin{enumerate}
+            \item \textbf{Key generation:} a receiver generates a public key and
+                  a secret key.
+            \item \textbf{Encapsulation:} the sender uses the receiver's public
+                  key to generate a ciphertext and a shared secret.
+            \item \textbf{Decapsulation:} the receiver uses the secret key to
+                  recover the same shared secret from the ciphertext.
+      \end{enumerate}
+
+      In contrast with classical Diffie--Hellman, the security of ML-KEM is
+      based on hard lattice problems rather than elliptic-curve discrete
+      logarithms. This makes it resistant to known quantum attacks such as
+      Shor's algorithm. In this project, ML-KEM is used during the handshake and
+      during periodic rekeying in the simplified ratchet.
+
+      \subsubsection{ML-DSA}
+      ML-DSA is the \textbf{Module-Lattice-Based Digital Signature Algorithm}
+      standardized by NIST in FIPS 204. It is the post-quantum replacement for
+      classical signature schemes such as Ed25519 or RSA signatures.
+
+      Its role in the protocol is authentication. It proves that a public key,
+      handshake message, or ratchet update was really produced by the claimed
+      user and not by an attacker or by the server. At a high level, ML-DSA
+      works as follows:
+      \begin{enumerate}
+            \item \textbf{Key generation:} a user creates a signing key and a
+                  verification key.
+            \item \textbf{Signing:} the sender computes a signature on a message
+                  or transcript using the signing key.
+            \item \textbf{Verification:} the receiver checks that signature using
+                  the public verification key.
+      \end{enumerate}
+
+      The security of ML-DSA also comes from structured lattice problems rather
+      than factorization or discrete logarithms. In this messaging design, ML-DSA
+      signs identity information, signed prekeys, handshake transcripts, and
+      optional ratchet public keys. This is what prevents man-in-the-middle key
+      substitution attacks.
+
+      \subsubsection{AES-256-GCM}
+      AES-256-GCM is a symmetric authenticated encryption algorithm. AES
+      (Advanced Encryption Standard) provides confidentiality, and GCM
+      (Galois/Counter Mode) adds integrity and authenticity.
+
+      Its role in the protocol is to protect the actual content of messages once
+      a shared session key has been established. At a high level:
+      \begin{enumerate}
+            \item a symmetric message key is derived from the session state,
+            \item AES encrypts the plaintext into ciphertext,
+            \item GCM computes an authentication tag over both the ciphertext and
+                  the additional authenticated data.
+      \end{enumerate}
+
+      AES-256 is kept in the post-quantum setting because symmetric encryption is
+      much less affected by quantum computing than public-key cryptography. A
+      quantum search attack such as Grover's algorithm only gives a quadratic
+      speedup, so a 256-bit symmetric key still provides a strong security
+      margin.
+
+      \subsubsection{HKDF}
+      HKDF is the \textbf{HMAC-based Key Derivation Function}. It is not a
+      public-key algorithm: instead, it is used to transform shared secrets into
+      structured cryptographic keys.
+
+      Its role in the protocol is to derive:
+      \begin{itemize}
+            \item the master secret from the handshake secrets,
+            \item the root key,
+            \item the sending and receiving chain keys,
+            \item the per-message encryption keys.
+      \end{itemize}
+
+      At a high level, HKDF takes input keying material and expands it into one
+      or several pseudorandom outputs that are independent from each other. This
+      is important because the protocol should never reuse one raw secret
+      directly for several cryptographic purposes.
+
+      \subsubsection{Hash function}
+      A cryptographic hash function is used to compute a fixed-size digest of the
+      handshake transcript. In practice, the protocol can use SHA-384 or SHA-512
+      consistently with the HKDF choice.
+
+      Its role in the protocol is to bind all handshake messages to the final key
+      derivation. If an attacker modifies even one field in the transcript, the
+      transcript hash changes and the resulting session key will not match. This
+      helps protect the integrity of the handshake context.
+
+      \subsubsection{Signed prekeys and ephemeral keys}
+      Even though signed prekeys and ephemeral keys are not separate algorithms,
+      they are important protocol mechanisms inspired by WhatsApp and Signal.
+
+      \begin{itemize}
+            \item A \textbf{signed prekey} is a semi-static ML-KEM public key
+                  signed by the user's ML-DSA identity key. It allows a new
+                  session to be started without reusing the identity key for key
+                  exchange.
+            \item An \textbf{ephemeral key} is a fresh temporary ML-KEM key pair
+                  created for a single handshake or rekey event. Once used, the
+                  private part must be erased.
+      \end{itemize}
+
+      These mechanisms improve forward secrecy. Even if a long-term identity key
+      is later exposed, previously deleted ephemeral secrets should not be
+      recoverable.
+
       \subsection{Protocol Flow }
       The proposed protocol keeps the WhatsApp design philosophy: the server
       relays public material and encrypted messages, but it must not learn the
