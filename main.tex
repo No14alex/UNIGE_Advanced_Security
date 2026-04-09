@@ -1,0 +1,448 @@
+\documentclass{article}
+
+% Language setting
+% Replace `english' with e.g. `spanish' to change the document language
+\usepackage[english]{babel}
+
+% Set page size and margins
+% Replace `letterpaper' with `a4paper' for UK/EU standard size
+\usepackage[
+      letterpaper,
+      top=2cm,
+      bottom=2cm,
+      left=3cm,
+      right=3cm,
+      marginparwidth=1.75cm
+]{geometry}
+
+% Useful packages
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage[colorlinks=true, allcolors=blue]{hyperref}
+
+\title{Draft - Quantum-Safe Messaging Protocol}
+\author{Noella Alexandra Mabelle}
+
+\begin{document}
+      \maketitle
+      \section{Whatsapp Signal Protocol}
+      WhatsApp utilise le Signal Protocol — X3DH pour établir une connexion sécurisée,
+      combiné au Double Ratchet pour changer les clés après chaque message. Même
+      si une clé est compromise, tous les messages passés et futurs restent
+      protégés.
+      \begin{itemize}
+            \item Every user has three type of keys on the server of Whatsapp : une
+                  identity key (long terme, pour verifier l’identité), une signed
+                  prekey (semi-long terme, pour initier une session même si long
+                  terme), et des one-time prekeys (usage unique).
+
+            \item Use of X3DH to send a message $SS1 = DH(IK_{A}, SPK_{B}) ← iden
+                  tité A lice + signed prekey Bob SS2 = DH(EK_{A}, IK_{B}) ← éphé
+                  mère Alice + identi té Bob SS3 = DH(EK_{A}, SPK_{B}) ← éphémère
+                  Alice + signed prekey Bob SS4 = DH(EK_{A}, OPK_{B}) ← éphémère
+                  Alice + one-time prekey Bob Secret final = H KDF(SS1 || SS2 ||
+                  SS3 || SS4)$
+
+            \item Double ratchet, X3DH (the signal protocol)
+
+            \item HANDSHAKE : X3DH, 4X ECDH (X25519)
+
+            \item MESSAGES (session) : Double Ratchet, Symmetric + DH Ratchet (ECDH)
+
+            \item AUTHENTICATION : ECDSA (Ed25519)
+
+            \item SYMETRIC : AES-256-CBC + HMAC-SHA256
+      \end{itemize}
+
+      \section{Quantum safe algorithm}
+      Implement a point-to-point messaging prototype inspired by WhatsApp
+      covering handshake, authentication, session management, and forward secrecy.
+      \begin{itemize}
+            \item Following NIST 2024 standards to be fully quantum safe
+
+            \item Simplified version (no groups, no multi-devices)
+
+            \item Quantum safe key exchange: ML-KEM
+
+            \item Quantum safe authentication: ML-DSA - AES-256 is kept for
+                  symmetric encryption
+
+            \item Simplified ratchet
+
+            \item To evaluate the practical implications of post-quantum messaging
+                  : o MIM simulation : what an attacker can capture on classical
+                  vs quantum-safe protocols o Comparative Benchmark of key sizes,
+                  handshake latency and signature sizes for classical and post-quantum.
+      \end{itemize}
+
+      \subsection{Protocol Flow }
+      The proposed protocol keeps the WhatsApp design philosophy: the server
+      relays public material and encrypted messages, but it must not learn the
+      session keys. In the classical Signal design, X3DH and the Double Ratchet
+      provide authentication and forward secrecy. In the post-quantum version,
+      we replace elliptic-curve primitives with NIST-standardized post-quantum
+      mechanisms:
+      \begin{itemize}
+            \item \textbf{Key establishment:} ML-KEM (FIPS 203).
+            \item \textbf{Authentication:} ML-DSA (FIPS 204).
+            \item \textbf{Symmetric protection:} AES-256-GCM for confidentiality
+                  and integrity.
+            \item \textbf{Key derivation:} HKDF-SHA-384 or HKDF-SHA-512.
+      \end{itemize}
+
+      This prototype is intentionally simplified: there are no groups, no
+      multi-device synchronization, and no advanced skipped-message handling.
+      The design only targets point-to-point communication between one device
+      owned by Alice and one device owned by Bob.
+
+      \subsubsection{Long-term and semi-static keys}
+      Before any communication, each user locally generates the following keys:
+      \begin{enumerate}
+            \item \textbf{Identity signature key pair}
+                  $(IK^{sig}_{priv}, IK^{sig}_{pub})$ using ML-DSA. This is the
+                  long-term identity of the user and is used to sign protocol
+                  material.
+            \item \textbf{Signed prekey KEM pair}
+                  $(SPK^{kem}_{priv}, SPK^{kem}_{pub})$ using ML-KEM. This is a
+                  medium-term key used to initiate new sessions.
+            \item \textbf{Optional one-time prekeys}
+                  $(OPK^{kem}_{priv}, OPK^{kem}_{pub})$ if asynchronous messaging
+                  is required. For a minimal online prototype, these can be
+                  omitted.
+      \end{enumerate}
+
+      Bob publishes a \emph{prekey bundle} to the server containing:
+      \[
+            \{ID_B,\ IK^{sig}_{pub,B},\ SPK^{kem}_{pub,B},\ expiry,\ version,\ \sigma_B\}
+      \]
+      where
+      \[
+            \sigma_B = \text{ML-DSA.Sign}(IK^{sig}_{priv,B}, ID_B \parallel SPK^{kem}_{pub,B} \parallel expiry \parallel version).
+      \]
+      The server stores the bundle, but it cannot forge it because it does not
+      know Bob's ML-DSA private identity key.
+
+      \subsubsection{Step 1: Bundle retrieval and verification}
+      When Alice wants to start a conversation, she queries the server for Bob's
+      prekey bundle. She receives
+      \[
+            \{IK^{sig}_{pub,B},\ SPK^{kem}_{pub,B},\ \sigma_B\}.
+      \]
+      Alice verifies $\sigma_B$ with Bob's public identity key. If the signature
+      check fails, the protocol aborts immediately. This verification step is
+      essential because, without it, the server or a man-in-the-middle attacker
+      could replace Bob's public key material.
+
+      \subsubsection{Step 2: Alice sends the handshake initiation}
+      Alice generates a fresh ephemeral ML-KEM key pair
+      $(EK^{kem}_{priv,A}, EK^{kem}_{pub,A})$ and a fresh nonce $N_A$. She then
+      signs the handshake context using her ML-DSA identity key:
+      \[
+            \sigma_A = \text{ML-DSA.Sign}(IK^{sig}_{priv,A},
+            ID_A \parallel ID_B \parallel EK^{kem}_{pub,A} \parallel N_A \parallel context).
+      \]
+      Alice sends the following \texttt{HANDSHAKE\_INIT} message to Bob:
+      \[
+            \{version,\ ID_A,\ ID_B,\ EK^{kem}_{pub,A},\ N_A,\ \sigma_A\}.
+      \]
+      This message does not yet reveal the final session key, but it binds
+      Alice's identity to her fresh ephemeral KEM contribution.
+
+      \subsubsection{Step 3: Bob authenticates Alice and replies}
+      After receiving \texttt{HANDSHAKE\_INIT}, Bob fetches Alice's public
+      identity key and verifies $\sigma_A$. If the verification succeeds, Bob
+      generates his own fresh ephemeral ML-KEM key pair
+      $(EK^{kem}_{priv,B}, EK^{kem}_{pub,B})$ and a nonce $N_B$.
+
+      Bob then encapsulates to Alice's ephemeral public key:
+      \[
+            (ct_B,\ ss_B) = \text{ML-KEM.Encaps}(EK^{kem}_{pub,A}).
+      \]
+      This produces a ciphertext $ct_B$ and a shared secret $ss_B$ that only
+      Alice can recover by decapsulation with $EK^{kem}_{priv,A}$.
+
+      To make the exchange mutually contributive, Alice will also encapsulate to
+      Bob's ephemeral public key after receiving the reply. Bob signs the full
+      transcript:
+      \[
+            \sigma'_B = \text{ML-DSA.Sign}(IK^{sig}_{priv,B},
+            ID_A \parallel ID_B \parallel EK^{kem}_{pub,A} \parallel EK^{kem}_{pub,B}
+            \parallel N_A \parallel N_B \parallel ct_B \parallel context).
+      \]
+      Bob sends the following \texttt{HANDSHAKE\_REPLY} message:
+      \[
+            \{version,\ ID_B,\ ID_A,\ EK^{kem}_{pub,B},\ ct_B,\ N_B,\ \sigma'_B\}.
+      \]
+
+      \subsubsection{Step 4: Alice completes the key establishment}
+      Alice verifies Bob's signature $\sigma'_B$, then decapsulates:
+      \[
+            ss_B = \text{ML-KEM.Decaps}(ct_B, EK^{kem}_{priv,A}).
+      \]
+      Next, Alice encapsulates to Bob's fresh ephemeral public key:
+      \[
+            (ct_A,\ ss_A) = \text{ML-KEM.Encaps}(EK^{kem}_{pub,B}).
+      \]
+      She sends the resulting ciphertext to Bob in a short
+      \texttt{HANDSHAKE\_FINISH} message:
+      \[
+            \{version,\ session\_id,\ ct_A\}.
+      \]
+      Bob decapsulates:
+      \[
+            ss_A = \text{ML-KEM.Decaps}(ct_A, EK^{kem}_{priv,B}).
+      \]
+      Both parties now possess the same pair of shared secrets
+      $(ss_A, ss_B)$ and derive a common master secret:
+      \[
+            master\_secret = \text{HKDF}(ss_A \parallel ss_B \parallel H(transcript)).
+      \]
+      Because the transcript hash $H(transcript)$ is included, the derived key
+      is cryptographically bound to the exact handshake that was authenticated.
+
+      \subsubsection{Step 5: Session key schedule and authentication state}
+      From the master secret, Alice and Bob derive a root key and two symmetric
+      chain keys:
+      \begin{align*}
+            root\_key      &= \text{HKDF}(master\_secret,\texttt{root}) \\
+            CK_{A \rightarrow B} &= \text{HKDF}(root\_key,\texttt{A\rightarrow B}) \\
+            CK_{B \rightarrow A} &= \text{HKDF}(root\_key,\texttt{B\rightarrow A})
+      \end{align*}
+
+      The session state stored by each client contains:
+      \begin{itemize}
+            \item the peer identity key fingerprint,
+            \item the session identifier,
+            \item the current root key,
+            \item one sending chain key and one receiving chain key,
+            \item message counters and ratchet counters.
+      \end{itemize}
+
+      If identity verification has already been done out of band, the peer
+      fingerprint must match the pinned value. Otherwise, the first verified
+      connection can be accepted in a trust-on-first-use model.
+
+      \subsubsection{Step 6: Protected message exchange}
+      For each outgoing message, the sender advances the sending chain:
+      \begin{align*}
+            msg\_key_i &= \text{HKDF}(CK,\texttt{msg} \parallel i) \\
+            CK_{next}  &= \text{HKDF}(CK,\texttt{chain} \parallel i)
+      \end{align*}
+      The plaintext is then encrypted with AES-256-GCM:
+      \[
+            C_i = \text{AES-256-GCM}(msg\_key_i,\ nonce_i,\ plaintext_i,\ AAD_i).
+      \]
+      The additional authenticated data $AAD_i$ should contain metadata that
+      must be integrity-protected but not encrypted, for example:
+      \[
+            AAD_i = session\_id \parallel sender\_id \parallel counter \parallel ratchet\_counter \parallel version.
+      \]
+      After a message key is used, it must be securely erased. This provides a
+      simplified form of forward secrecy at the message layer.
+
+      \subsubsection{Step 7: Simplified post-quantum ratchet}
+      A full Signal-style Double Ratchet can be complex to implement. For this
+      project, a simplified ratchet is sufficient:
+      \begin{enumerate}
+            \item \textbf{Symmetric ratchet:} derive a new message key from the
+                  current chain key for every message.
+            \item \textbf{Periodic PQ rekeying:} every $N$ messages, or after a
+                  fixed timeout, the sender generates a fresh ephemeral ML-KEM
+                  public key and signs it with ML-DSA.
+            \item \textbf{Root key refresh:} the receiver encapsulates to that
+                  fresh public key, both sides derive a new shared secret, and
+                  mix it into the root key with HKDF.
+      \end{enumerate}
+      This periodic rekeying improves post-handshake forward secrecy without
+      requiring the full complexity of the Double Ratchet protocol.
+
+      \subsubsection{Security properties}
+      The protocol aims to provide the following guarantees:
+      \begin{itemize}
+            \item \textbf{Confidentiality:} messages are encrypted with
+                  AES-256-GCM under per-message keys.
+            \item \textbf{Authentication:} only a party owning the correct
+                  ML-DSA identity key can produce valid handshake signatures.
+            \item \textbf{Forward secrecy:} ephemeral ML-KEM private keys are
+                  deleted after use, and message keys are not reused.
+            \item \textbf{Man-in-the-middle resistance:} an attacker cannot
+                  replace authenticated keys without forging ML-DSA signatures.
+            \item \textbf{Quantum resistance:} the public-key layer does not
+                  rely on ECC or RSA, avoiding the harvest-now-decrypt-later
+                  weakness of classical public-key protocols.
+      \end{itemize}
+
+      \subsubsection{MITM simulation plan}
+      To evaluate the practical security implications, the prototype can be
+      tested under three scenarios:
+      \begin{enumerate}
+            \item \textbf{Unauthenticated exchange:} the attacker intercepts and
+                  replaces public keys. This should succeed in both the classical
+                  and post-quantum versions because authentication is absent.
+            \item \textbf{Authenticated classical protocol:} the attacker can
+                  capture the entire transcript, including public keys,
+                  ciphertexts, signatures, and metadata, but cannot tamper with
+                  the session without being detected. However, recorded traffic
+                  remains vulnerable to future quantum attacks against X25519 or
+                  Ed25519.
+            \item \textbf{Authenticated post-quantum protocol:} the attacker can
+                  still capture the full transcript, but the confidentiality of
+                  recorded sessions should remain protected against known quantum
+                  attacks because the protocol uses ML-KEM and ML-DSA.
+      \end{enumerate}
+
+      \subsubsection{Comparative benchmark plan}
+      The benchmark should compare a classical profile
+      (X25519 + Ed25519 + AES-256-GCM) with a post-quantum profile
+      (ML-KEM + ML-DSA + AES-256-GCM). The following metrics should be measured:
+      \begin{itemize}
+            \item public key size,
+            \item private key size,
+            \item KEM ciphertext size,
+            \item signature size,
+            \item total handshake bytes exchanged,
+            \item handshake latency,
+            \item encapsulation and decapsulation time,
+            \item signing and verification time.
+      \end{itemize}
+
+      In practice, the expected result is that the post-quantum protocol offers
+      stronger long-term security against quantum adversaries, but at the cost of
+      significantly larger keys, larger signatures, and higher handshake
+      overhead.
+
+      \section{Some examples to get started}
+
+      \subsection{How to include Figures}
+
+      First you have to upload the image file from your computer using the
+      upload link in the file-tree menu. Then use the includegraphics command to
+      include it in your document. Use the figure environment and the caption
+      command to add a number and a caption to your figure. See the code for Figure
+      \ref{fig:frog} in this section for an example.
+
+      Note that your figure will automatically be placed in the most appropriate
+      place for it, given the surrounding text and taking into account other
+      figures or tables that may be close by. You can find out more about adding
+      images to your documents in this help article on \href{https://www.overleaf.com/learn/how-to/Including_images_on_Overleaf}{including
+      images on Overleaf}.
+
+      \begin{figure}
+            \centering
+            \includegraphics[width=0.25\linewidth]{frog.jpg}
+            \caption{\label{fig:frog}This frog was uploaded via the file-tree menu.}
+      \end{figure}
+
+      \subsection{How to add Tables}
+
+      Use the table and tabular environments for basic tables --- see Table~\ref{tab:widgets},
+      for example. For more information, please see this help article on
+      \href{https://www.overleaf.com/learn/latex/tables}{tables}.
+
+      \begin{table}
+            \centering
+            \begin{tabular}{l|r}
+                  Item    & Quantity \\
+                  \hline
+                  Widgets & 42       \\
+                  Gadgets & 13
+            \end{tabular}
+            \caption{\label{tab:widgets}An example table.}
+      \end{table}
+
+      \subsection{How to add Comments and Track Changes}
+
+      Comments can be added to your project by highlighting some text and
+      clicking ``Add comment'' in the top right of the editor pane. To view existing
+      comments, click on the Review menu in the toolbar above. To reply to a comment,
+      click on the Reply button in the lower right corner of the comment. You can
+      close the Review pane by clicking its name on the toolbar when you're done
+      reviewing for the time being.
+
+      Track changes are available on all our \href{https://www.overleaf.com/user/subscription/plans}{premium
+      plans}, and can be toggled on or off using the option at the top of the
+      Review pane. Track changes allow you to keep track of every change made to
+      the document, along with the person making the change.
+
+      \subsection{How to add Lists}
+
+      You can make lists with automatic numbering \dots
+
+      \begin{enumerate}
+            \item Like this,
+
+            \item and like this.
+      \end{enumerate}
+      \dots or bullet points \dots
+      \begin{itemize}
+            \item Like this,
+
+            \item and like this.
+      \end{itemize}
+
+      \subsection{How to write Mathematics}
+
+      \LaTeX{} is great at typesetting mathematics. Let
+      $X_{1}, X_{2}, \ldots, X_{n}$ be a sequence of independent and identically
+      distributed random variables with $\text{E}[X_{i}] = \mu$ and
+      $\text{Var}[X_{i}] = \sigma^{2}< \infty$, and let
+      \[
+            S_{n}= \frac{X_{1}+ X_{2}+ \cdots + X_{n}}{n}= \frac{1}{n}\sum_{i}^{n}
+            X_{i}
+      \]
+      denote their mean. Then as $n$ approaches infinity, the random variables $\sqrt{n}
+      (S_{n}- \mu)$ converge in distribution to a normal $\mathcal{N}(0, \sigma^{2}
+      )$.
+
+      \subsection{How to change the margins and paper size}
+
+      Usually the template you're using will have the page margins and paper
+      size set correctly for that use-case. For example, if you're using a
+      journal article template provided by the journal publisher, that template will
+      be formatted according to their requirements. In these cases, it's best not
+      to alter the margins directly.
+
+      If however you're using a more general template, such as this one, and would
+      like to alter the margins, a common way to do so is via the geometry
+      package. You can find the geometry package loaded in the preamble at the top
+      of this example file, and if you'd like to learn more about how to adjust
+      the settings, please visit this help article on \href{https://www.overleaf.com/learn/latex/page_size_and_margins}{page
+      size and margins}.
+
+      \subsection{How to change the document language and spell check settings}
+
+      Overleaf supports many different languages, including multiple different languages
+      within one document.
+
+      To configure the document language, simply edit the option provided to the
+      babel package in the preamble at the top of this example project. To learn
+      more about the different options, please visit this help article on
+      \href{https://www.overleaf.com/learn/latex/International_language_support}{international
+      language support}.
+
+      To change the spell check language, simply open the Overleaf menu at the top
+      left of the editor window, scroll down to the spell check setting, and adjust
+      accordingly.
+
+      \subsection{How to add Citations and a References List}
+
+      You can simply upload a \verb|.bib| file containing your BibTeX entries, created
+      with a tool such as JabRef. You can then cite entries from it, like this:
+      \cite{greenwade93}. Just remember to specify a bibliography style, as well
+      as the filename of the \verb|.bib|. You can find a \href{https://www.overleaf.com/help/97-how-to-include-a-bibliography-using-bibtex}{video
+      tutorial here} to learn more about BibTeX.
+
+      If you have an \href{https://www.overleaf.com/user/subscription/plans}{upgraded
+      account}, you can also import your Mendeley or Zotero library directly as
+      a \verb|.bib| file, via the upload menu in the file-tree.
+
+      \subsection{Good luck!}
+
+      We hope you find Overleaf useful, and do take a look at our \href{https://www.overleaf.com/learn}{help
+      library} for more tutorials and user guides! Please also let us know if
+      you have any feedback using the \textbf{Contact us} link at the bottom of the
+      Overleaf menu --- or use the contact form at \url{https://www.overleaf.com/contact}.
+
+      \bibliographystyle{alpha}
+      \bibliography{sample}
+\end{document}
