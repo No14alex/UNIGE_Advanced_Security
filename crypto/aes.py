@@ -1,7 +1,7 @@
 """
 AES-256-GCM symmetric encryption module.
 
-1. Key Generation   k = Random(32 bytes)
+1. Key Generation   k = Random(32 bytes = 256 bits)
 2. Encryption       (nonce, c) = Enc(k, m, aad)
 3. Decryption       m = Dec(k, nonce, c, aad)
 """
@@ -20,10 +20,10 @@ NONCE_SIZE = 12
 @dataclass
 class AESGCMCiphertext:
     """
-    Resultat d'un chiffrement AES-256-GCM.
+    result of AES-256-GCM encryption.
 
-    - nonce: valeur unique par message
-    - ciphertext: donnees chiffrees + tag GCM
+    - nonce: unique value per message
+    - ciphertext: encrypted data + GCM tag
     """
 
     nonce: bytes
@@ -37,20 +37,23 @@ class AESGCMCiphertext:
         )
 
 
+##----------
+
 def generate_key() -> bytes:
-    """Genere une cle AES-256 aleatoire."""
+    """Generate a random AES-256 key."""
     return os.urandom(KEY_SIZE)
 
 
 def encrypt(key: bytes, plaintext: bytes, aad: bytes = b"") -> AESGCMCiphertext:
     """
-    Chiffre un message avec AES-256-GCM.
+    Encrypt a message with AES-256-GCM.
 
     Args:
-        key: cle symetrique de 32 octets
-        plaintext: message a chiffrer
-        aad: additional authenticated data
+        key: 32-byte symmetric key
+        plaintext: message to encrypt
+        aad: additional authenticated data, receiver can verify that nothing was modified
     """
+
     _validate_key(key)
     nonce = os.urandom(NONCE_SIZE)
     aesgcm = AESGCM(key)
@@ -60,11 +63,11 @@ def encrypt(key: bytes, plaintext: bytes, aad: bytes = b"") -> AESGCMCiphertext:
 
 def decrypt(key: bytes, nonce: bytes, ciphertext: bytes, aad: bytes = b"") -> bytes:
     """
-    Dechiffre un message AES-256-GCM.
+    Decrypt an AES-256-GCM message.
 
     Raises:
-        ValueError si la taille de la cle ou du nonce est incorrecte
-        InvalidTag si le ciphertext, le nonce ou l'AAD ont ete modifies
+        ValueError if the key or nonce size is incorrect
+        InvalidTag if the ciphertext, nonce, or AAD have been modified
     """
     _validate_key(key)
     _validate_nonce(nonce)
@@ -73,7 +76,7 @@ def decrypt(key: bytes, nonce: bytes, ciphertext: bytes, aad: bytes = b"") -> by
 
 
 def aes_info() -> dict:
-    """Retourne les parametres utilises pour AES-256-GCM."""
+    """Returns the parameters used"""
     return {
         "algorithm": "AES-256-GCM",
         "key_bytes": KEY_SIZE,
@@ -94,19 +97,19 @@ def _validate_nonce(nonce: bytes) -> None:
         raise ValueError(
             f"Taille de nonce incorrecte : recu {len(nonce)} octets, attendu {NONCE_SIZE}"
         )
-
+# DEMO of encryption and decryption
 
 if __name__ == "__main__":
     print("=" * 60)
     print("  AES-256-GCM — Protocole QSMP")
     print("=" * 60)
 
-    print("\nParametres :")
+    print("\nParameters :")
     for key, value in aes_info().items():
         print(f"   {key:<16} {value}")
 
     key = generate_key()
-    print(f"\nCle generee : {len(key)} octets")
+    print(f"\nGenerated key : {len(key)} bytes")
 
     plaintext = b"Hello Bob, this message is confidential."
     aad = b"session-1|counter-1"
@@ -114,20 +117,20 @@ if __name__ == "__main__":
     print(f"AAD       : {aad!r}")
 
     result = encrypt(key, plaintext, aad)
-    print("\nChiffrement...")
+    print("\nEncryption...")
     print(f"   {result}")
 
     recovered = decrypt(key, result.nonce, result.ciphertext, aad)
-    print("\nDechiffrement...")
-    print(f"   Plaintext recupere : {recovered!r}")
-    print(f"   Dechiffrement OK   : {recovered == plaintext}")
+    print("\nDecryption...")
+    print(f"   Plaintext recovered : {recovered!r}")
+    print(f"   Decryption OK   : {recovered == plaintext}")
 
-    print("\nTest de detection d'alteration...")
+    print("\nTest of detection of alteration...")
     tampered = bytearray(result.ciphertext)
     tampered[0] ^= 0xFF
     try:
         decrypt(key, result.nonce, bytes(tampered), aad)
-        print("   ERREUR : alteration non detectee")
+        print("   ERROR : alteration not detected")
     except InvalidTag:
         print("   OK : alteration detectee (InvalidTag)")
 
