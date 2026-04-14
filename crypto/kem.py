@@ -1,3 +1,8 @@
+from dataclasses import dataclass
+from importlib import util as importlib_util
+from pathlib import Path
+import sysconfig
+
 '''
 Key encapsulation mechanism 
 ML - KEM - 768 protocol (Kyber)
@@ -7,87 +12,78 @@ ML - KEM - 768 protocol (Kyber)
 3. Decapsulation    k' = Decap(sk,c')
 
 '''
+# -----------------
 
-from dataclasses import dataclass
-from importlib import util as importlib_util
-from pathlib import Path
-import sysconfig
 
 
 def _load_oqs_module():
     """
-    Charge le bon module OQS.
+Load the right oqs module
+Ensure that the API uses the oqs of the liboqs-python package
+"""
 
-    Dans cet environnement, un package tiers nommé ``oqs`` peut écraser
-    l'entrée attendue de ``liboqs-python``. On tente donc d'abord l'import
-    normal, puis on recharge explicitement ``site-packages/oqs/oqs.py`` si
-    l'API liboqs attendue n'est pas présente.
-    """
     import oqs as imported_oqs
 
-    if hasattr(imported_oqs, "KeyEncapsulation"):
+    if hasattr(imported_oqs, "KeyEncapsulation"): #hasattr(object, attribute)
         return imported_oqs
 
     purelib = Path(sysconfig.get_paths()["purelib"])
-    candidate = purelib / "oqs" / "oqs.py"
+    candidate = purelib / "oqs" / "oqs.py" #constructs the path to the right oqs
     if not candidate.exists():
         raise ImportError(
-            "liboqs-python introuvable: le module 'oqs' importé n'expose pas "
-            "KeyEncapsulation et aucun fallback n'a été trouvé."
+            "liboqs-python couldn't be found "
+            "KeyEncapsulation and no fallback was found."
         )
 
     spec = importlib_util.spec_from_file_location("liboqs_python_compat", candidate)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Impossible de charger le module OQS depuis {candidate}")
-
     oqs_module = importlib_util.module_from_spec(spec)
     spec.loader.exec_module(oqs_module)
     return oqs_module
 
+oqs = _load_oqs_module() 
 
-oqs = _load_oqs_module()
 
 
-# ML-KEM-768 = NIST Level 3 (recommandé pour production)
-# ML-KEM-512 = NIST Level 1 (plus rapide, moins sécurisé)
-# ML-KEM-1024 = NIST Level 5 (plus lent, plus sécurisé)
+# ML-KEM-768 = NIST Level 3 (recommended for production)
+# ML-KEM-512 = NIST Level 1 (faster, less secure)
+# ML-KEM-1024 = NIST Level 5 (slower, more secure)
 KEM_ALGORITHM = "ML-KEM-768"
 
 
 # ---------------------------------------------------------------------------
-# Structures de données
+# Data structures
 # ---------------------------------------------------------------------------
 
 @dataclass
-class KEMKeyPair:
+class KEM_KeyPair:
     """
-    Paire de clés ML-KEM-768.
+    ML-KEM-768 key pair
 
-    Tailles FIPS 203 :
-      - public_key  : 1184 octets
-      - secret_key  : 2400 octets
+    sizes FIPS 203 :
+      - public_key  : 1184 bytes
+      - secret_key  : 2400 bytes
     """
     public_key: bytes
     secret_key: bytes
 
     def public_key_hex(self) -> str:
-        return self.public_key.hex()
+        return self.public_key.hex() 
 
-    def __repr__(self):
+    def __repr__(self): #affichage de l'object pour print(keypair)
         return (
-            f"KEMKeyPair("
+            f"KEM_KeyPair("
             f"pk[{len(self.public_key)}B]={self.public_key.hex()[:16]}…, "
-            f"sk[{len(self.secret_key)}B]=***)"
+            f"sk[{len(self.secret_key)}B]=***)" #doesn't show the secret key 
         )
 
 
 @dataclass
 class KEMEncapsulationResult:
     """
-    Résultat d'une encapsulation ML-KEM.
+    Result of encapsulation 
 
-    - ciphertext    : à envoyer à l'autre partie (1088 octets)
-    - shared_secret : secret gardé localement    (32 octets)
+    - ciphertext    : to send to the other party (1088 bytes)
+    - shared_secret : secret kept locally    (32 bytes)
     """
     ciphertext: bytes
     shared_secret: bytes
@@ -99,46 +95,45 @@ class KEMEncapsulationResult:
             f"ss={self.shared_secret.hex()})"
         )
 
+#---------------------------------------------------------------------------
+#Principal functions 
+#---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Fonctions principales
-# ---------------------------------------------------------------------------
-
-def generate_keypair() -> KEMKeyPair:
+def generate_keypair() -> KEM_KeyPair:
     """
-    Génère une paire de clés ML-KEM-768.
+    Generate a ML-KEM-768 key pair.
 
-    Utilisé par :
-      - Bob pour sa clé d'identité (IK)
-      - Bob pour sa Signed PreKey (SPK)
-      - Bob pour ses One-Time PreKeys (OPK)
+    Used by :
+      - Bob for his identity key (IK)
+      - Bob for his Signed PreKey (SPK)
+      - Bob for his One-Time PreKeys (OPK)
 
     Returns:
-        KEMKeyPair(public_key, secret_key)
+        KEM_KeyPair(public_key, secret_key)
     """
     with oqs.KeyEncapsulation(KEM_ALGORITHM) as kem:
         public_key = kem.generate_keypair()
         secret_key = kem.export_secret_key()
 
-    return KEMKeyPair(public_key=public_key, secret_key=secret_key)
+    return KEM_KeyPair(public_key=public_key, secret_key=secret_key)
 
 
 def encapsulate(public_key: bytes) -> KEMEncapsulationResult:
     """
-    Encapsule un secret partagé avec la clé publique du destinataire.
-    Appelé par l'initiateur (Alice) durant le handshake PQ-X3DH.
+    Encapsulate a shared secret with the recipient's public key.
+    Called by the initiator (Alice) during the PQ-X3DH handshake.
 
     Args:
-        public_key : clé publique du destinataire (Bob)
+        public_key : recipient's public key (Bob)
 
     Returns:
         KEMEncapsulationResult :
-          - ciphertext    → à envoyer à Bob via le serveur
-          - shared_secret → conservé par Alice pour dériver la master key
+          - ciphertext    → to send to Bob via the server
+          - shared_secret → kept by Alice to derive the master key
 
     Raises:
-        ValueError : si la clé publique a une taille incorrecte
-        RuntimeError : si liboqs échoue
+        ValueError : if the public key has an incorrect size
+        RuntimeError : if liboqs fails
     """
     _validate_public_key(public_key)
 
@@ -150,26 +145,26 @@ def encapsulate(public_key: bytes) -> KEMEncapsulationResult:
 
 def decapsulate(secret_key: bytes, ciphertext: bytes) -> bytes:
     """
-    Décapsule le secret partagé avec la clé secrète locale.
-    Appelé par le destinataire (Bob) durant le handshake PQ-X3DH
-    et à chaque tour du KEM Ratchet.
+    Decapsulate the shared secret with the local secret key.
+    Called by the recipient (Bob) during the PQ-X3DH handshake
+    and at each turn of the KEM Ratchet.
 
     Args:
-        secret_key  : clé secrète de Bob
+        secret_key  : Bob's secret key
         ciphertext  : ciphertext reçu d'Alice
 
     Returns:
-        shared_secret (32 octets) — identique au shared_secret d'Alice
-        si les clés sont correctes.
+        shared_secret (32 bytes) — identical to Alice's shared_secret
+        if the keys are correct.
 
     Note IND-CCA2 :
-        Si le ciphertext est modifié (attaque active), ML-KEM ne lève
-        pas d'exception — il retourne un secret pseudo-aléatoire incorrect.
-        C'est un comportement intentionnel (pas d'oracle d'erreur).
+        If the ciphertext is modified (active attack), ML-KEM does not raise
+        an exception — it returns an incorrect pseudo-random secret.
+        This is intentional (no error oracle).
 
     Raises:
-        ValueError : si les tailles sont incorrectes
-        RuntimeError : si liboqs échoue
+        ValueError : if the sizes are incorrect
+        RuntimeError : if liboqs fails
     """
     _validate_secret_key(secret_key)
     _validate_ciphertext(ciphertext)
@@ -181,31 +176,30 @@ def decapsulate(secret_key: bytes, ciphertext: bytes) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# KEM Ratchet — utilisé dans double_ratchet.py
+# KEM Ratchet — for double_ratchet.py
 # ---------------------------------------------------------------------------
 
 def kem_ratchet_step(their_public_key: bytes) -> tuple[bytes, bytes]:
     """
-    Effectue un pas du KEM Ratchet (remplace le DH Ratchet de Signal).
-
-    Appelé par l'émetteur à chaque nouveau "tour" de ratchet.
+    Performs one step of the KEM Ratchet (replaces Signal's DH Ratchet).
+    Called by the sender at each new ratchet "turn".
 
     Returns:
         (our_new_public_key, shared_secret)
-        - our_new_public_key : à inclure dans le header du message
-        - shared_secret      : utilisé pour dériver les nouvelles clés de chaîne
+        - our_new_public_key : to include in the message header
+        - shared_secret      : used to derive new chain keys
 
-    Usage dans double_ratchet.py :
+    Usage in double_ratchet.py :
         new_pk, ratchet_secret = kem_ratchet_step(their_ratchet_public_key)
     """
     result = encapsulate(their_public_key)
-    # On génère aussi notre nouvelle clé pour le prochain tour
+    # Generate our new key for the next turn
     new_keypair = generate_keypair()
     return new_keypair.public_key, result.shared_secret
 
 
 # ---------------------------------------------------------------------------
-# Validation interne
+# Internal validation
 # ---------------------------------------------------------------------------
 
 def _validate_public_key(public_key: bytes) -> None:
@@ -213,8 +207,8 @@ def _validate_public_key(public_key: bytes) -> None:
     expected = info["public_key_bytes"]
     if len(public_key) != expected:
         raise ValueError(
-            f"Taille de clé publique incorrecte : "
-            f"reçu {len(public_key)} octets, attendu {expected}"
+            f"Incorrect public key size : "
+            f"received {len(public_key)} bytes, expected {expected}"
         )
 
 
@@ -223,8 +217,8 @@ def _validate_secret_key(secret_key: bytes) -> None:
     expected = info["secret_key_bytes"]
     if len(secret_key) != expected:
         raise ValueError(
-            f"Taille de clé secrète incorrecte : "
-            f"reçu {len(secret_key)} octets, attendu {expected}"
+            f"Incorrect secret key size : "
+            f"received {len(secret_key)} bytes, expected {expected}"
         )
 
 
@@ -239,11 +233,11 @@ def _validate_ciphertext(ciphertext: bytes) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Utilitaires
+# Utilities
 # ---------------------------------------------------------------------------
 
 def kem_info() -> dict:
-    """Retourne les paramètres de taille de ML-KEM-768."""
+    """Returns the size parameters of ML-KEM-768."""
     with oqs.KeyEncapsulation(KEM_ALGORITHM) as kem:
         d = kem.details
     return {
@@ -257,5 +251,5 @@ def kem_info() -> dict:
 
 
 def is_available() -> bool:
-    """Vérifie que ML-KEM-768 est disponible dans liboqs."""
+    """Checks if ML-KEM-768 is available in liboqs."""
     return KEM_ALGORITHM in oqs.get_enabled_kem_mechanisms()
