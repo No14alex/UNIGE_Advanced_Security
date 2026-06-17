@@ -97,14 +97,14 @@ def encrypt_message(session: MessagingSession, plaintext: bytes) -> messages.Enc
 
 def decrypt_message(session: MessagingSession, message: messages.EncryptedMessage) -> bytes:
     if message.header.session_id != session.session_id:
-        raise ValueError("non valid ID session")
+        raise ValueError("Session ID invalide")
     if message.header.sender_id != session.peer_user_id:
-        raise ValueError("non valid sender id")
+        raise ValueError("Expediteur inattendu")
 
         
     if message.header.counter != session.recv_counter:
         raise ValueError(
-            f"non valid counter : receive {message.header.counter}, expected {session.recv_counter}"
+            f"Compteur de reception inattendu: recu {message.header.counter}, attendu {session.recv_counter}"
         )
 
     msg_key, next_chain_key = _derive_message_key(session.recv_chain_key, session.recv_counter)
