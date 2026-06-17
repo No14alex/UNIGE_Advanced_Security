@@ -1,0 +1,15 @@
+.DS_Store
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.venv-rest/
+
+# Local relay artifacts
+qsmp_relay.sqlite3
+qsmp_relay.sqbpro
+postman_demo_data.json
+
+# Generated benchmark/report artifacts
+security_report/
+
