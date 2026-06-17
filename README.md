@@ -121,7 +121,6 @@ The evaluation assumes that:
 .
 ├── crypto/            # ML-KEM, ML-DSA, AES-GCM, HKDF, primitive tests
 ├── protocol/          # authentication, handshake, session, ratchet, relay, benchmarks
-├── security_report/   # LaTeX report, benchmark outputs, generated figures
 ├── requirements.txt
 └── README.md
 ```
@@ -277,20 +276,8 @@ At a high level, the project demonstrates that:
 - post-quantum migration is practical in computation time
 - the largest practical cost is **object size and handshake overhead**, not total runtime alone
 
-## Report
-
-The LaTeX report is located in:
-
-- `security_report/main.tex`
-
-Bibliography:
-
-- `security_report/sample.bib`
-
-Related generated assets:
-
-- `security_report/benchmark_results.json`
-- `security_report/benchmark_timing_chart.png`
+These benchmark artifacts are generated locally by the benchmark scripts and do
+not need to be versioned in the repository.
 
 ## Limitations
 
@@ -311,7 +298,6 @@ A minimal runnable archive usually only needs:
 
 - `crypto/`
 - `protocol/`
-- `security_report/`
 - `requirements.txt`
 - `README.md`
 - `conftest.py`
@@ -331,4 +317,3 @@ This repository was developed as an academic project for:
 
 - **Course**: Advanced Security
 - **Institution**: University of Geneva
-
