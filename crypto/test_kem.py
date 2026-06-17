@@ -1,3 +1,4 @@
+from crypto.kem import KEM_KeyPair
 import pytest
 from crypto.kem import (
     generate_keypair,
@@ -6,7 +7,7 @@ from crypto.kem import (
     kem_ratchet_step,
     kem_info,
     is_available,
-    KEMKeyPair,
+    KEM_KeyPair,
     KEMEncapsulationResult,
     KEM_ALGORITHM,
 )
@@ -52,7 +53,7 @@ class TestAvailability:
 
 class TestGenerateKeypair:
     def test_returns_keypair_type(self):
-        assert isinstance(generate_keypair(), KEMKeyPair)
+        assert isinstance(generate_keypair(), KEM_KeyPair)
 
     def test_correct_sizes(self):
         kp = generate_keypair()
@@ -80,7 +81,7 @@ class TestGenerateKeypair:
     def test_keypair_repr_hides_secret_key_material(self):
         kp = generate_keypair()
         text = repr(kp)
-        assert "KEMKeyPair(" in text
+        assert "KEM_KeyPair(" in text
         assert "sk[" in text
         assert "***" in text
         assert kp.secret_key.hex()[:16] not in text

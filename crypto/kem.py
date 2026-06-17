@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from importlib import util as importlib_util
 from pathlib import Path
 import sysconfig
+from oqs_load import oqs
 
 '''
 Key encapsulation mechanism 
@@ -12,41 +13,7 @@ ML - KEM - 768 protocol (Kyber)
 3. Decapsulation    k' = Decap(sk,c')
 
 '''
-# -----------------
 
-
-
-def _load_oqs_module():
-    """
-Load the right oqs module
-Ensure that the API uses the oqs of the liboqs-python package
-"""
-
-    import oqs as imported_oqs
-
-    if hasattr(imported_oqs, "KeyEncapsulation"): #hasattr(object, attribute)
-        return imported_oqs
-
-    purelib = Path(sysconfig.get_paths()["purelib"])
-    candidate = purelib / "oqs" / "oqs.py" #constructs the path to the right oqs
-    if not candidate.exists():
-        raise ImportError(
-            "liboqs-python couldn't be found "
-            "KeyEncapsulation and no fallback was found."
-        )
-
-    spec = importlib_util.spec_from_file_location("liboqs_python_compat", candidate)
-    oqs_module = importlib_util.module_from_spec(spec)
-    spec.loader.exec_module(oqs_module)
-    return oqs_module
-
-oqs = _load_oqs_module() 
-
-
-
-# ML-KEM-768 = NIST Level 3 (recommended for production)
-# ML-KEM-512 = NIST Level 1 (faster, less secure)
-# ML-KEM-1024 = NIST Level 5 (slower, more secure)
 KEM_ALGORITHM = "ML-KEM-768"
 
 
@@ -83,7 +50,7 @@ class KEMEncapsulationResult:
     Result of encapsulation 
 
     - ciphertext    : to send to the other party (1088 bytes)
-    - shared_secret : secret kept locally    (32 bytes)
+    - shared_secret : secret kept locally (32 bytes)
     """
     ciphertext: bytes
     shared_secret: bytes
@@ -176,7 +143,7 @@ def decapsulate(secret_key: bytes, ciphertext: bytes) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# KEM Ratchet — for double_ratchet.py
+# KEM Ratchet — for double_ratchet.py - not used here for futur work 
 # ---------------------------------------------------------------------------
 
 def kem_ratchet_step(their_public_key: bytes) -> tuple[bytes, bytes]:
@@ -193,7 +160,7 @@ def kem_ratchet_step(their_public_key: bytes) -> tuple[bytes, bytes]:
         new_pk, ratchet_secret = kem_ratchet_step(their_ratchet_public_key)
     """
     result = encapsulate(their_public_key)
-    # Generate our new key for the next turn
+    # Generate our new key for the next ratchet
     new_keypair = generate_keypair()
     return new_keypair.public_key, result.shared_secret
 
@@ -207,8 +174,8 @@ def _validate_public_key(public_key: bytes) -> None:
     expected = info["public_key_bytes"]
     if len(public_key) != expected:
         raise ValueError(
-            f"Incorrect public key size : "
-            f"received {len(public_key)} bytes, expected {expected}"
+            f"Taille de clé publique incorrecte : "
+            f"reçu {len(public_key)} octets, attendu {expected}"
         )
 
 
@@ -217,8 +184,8 @@ def _validate_secret_key(secret_key: bytes) -> None:
     expected = info["secret_key_bytes"]
     if len(secret_key) != expected:
         raise ValueError(
-            f"Incorrect secret key size : "
-            f"received {len(secret_key)} bytes, expected {expected}"
+            f"Taille de clé secrète incorrecte : "
+            f"reçu {len(secret_key)} octets, attendu {expected}"
         )
 
 

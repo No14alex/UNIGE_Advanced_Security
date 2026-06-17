@@ -1,19 +1,15 @@
-
-
 """
 HKDF implementation following RFC 5869.
 
 1. Extract   PRK = HMAC(salt, IKM)
 2. Expand    OKM = HMAC(PRK, T(n-1) || info || counter)
 """
-
 import hashlib
 import hmac
 
+DEFAULT_HASH = "sha512"
 
-DEFAULT_HASH = "sha256"
-
-
+# Helper function, converts the string name into the hash function object 
 def _get_hash_function(hash_name: str):
     try:
         return getattr(hashlib, hash_name)
@@ -21,20 +17,45 @@ def _get_hash_function(hash_name: str):
         raise ValueError(f"Fonction de hash non supportee: {hash_name}") from exc
 
 
+#HMAC(key, data) 
 def hmac_digest(key: bytes, data: bytes, hash_name: str = DEFAULT_HASH) -> bytes:
     hash_function = _get_hash_function(hash_name)
     return hmac.new(key, data, hash_function).digest()
 
+"""
+ Step 1: Extract
+   HKDF-Extract(salt, IKM) -> PRK
+   Inputs:
+      salt     optional salt value (a non-secret random value);
+      IKM      input keying material (raw shared key, from ss_A ss_B transcript hash) 
+   Output:
+      PRK      a pseudorandom key 
 
+   The output PRK :
+   PRK = HMAC-Hash(salt, IKM)  where Hmac(key,data)
+
+   """
 def hkdf_extract(salt: bytes, ikm: bytes, hash_name: str = DEFAULT_HASH) -> bytes:
     hash_function = _get_hash_function(hash_name)
     if len(salt) == 0:
         salt = bytes(hash_function().digest_size)
     return hmac_digest(salt, ikm, hash_name)
 
+"""
+ Step 2: Expand, to have many key bytes
+    HKDF-Expand(PRK, info, L) -> OKM
+   Inputs:
+      PRK      pseudorandom key (must be at least HashLen bytes)
+      info     optional context-specific string
+      L        length of output string
+   Output:
+      OKM      derived output keying material
+   The output OKM is calculated as follows:
+   OKM = T_1 || T_2 || ... || T_n 
+"""
 
 def hkdf_expand(
-    prk: bytes,
+    prk: bytes, #result from the hmac, pseudo-random key
     info: bytes,
     length: int,
     hash_name: str = DEFAULT_HASH,
@@ -43,15 +64,15 @@ def hkdf_expand(
     digest_size = hash_function().digest_size
 
     if length < 0:
-        raise ValueError("La longueur derivee doit etre positive ou nulle")
+        raise ValueError("derived length must be positive or zero")
     if length > 255 * digest_size:
         raise ValueError(
-            f"La longueur derivee est trop grande: {length}, maximum {255 * digest_size}"
+            f"derived length too big: {length}, maximum {255 * digest_size}"
         )
     if length == 0:
         return b""
 
-    t = b""
+    t = b"" #the previous output block
     okm = b""
     counter = 0
     while len(okm) < length:
@@ -60,7 +81,7 @@ def hkdf_expand(
         okm += t
     return okm[:length]
 
-
+# extract and expand in one function for protocol
 def hkdf(
     salt: bytes,
     ikm: bytes,
@@ -79,7 +100,7 @@ def hkdf_info() -> dict:
         "rfc": "RFC 5869",
     }
 
-
+"""
 if __name__ == "__main__":
     print("=" * 60)
     print("  HKDF — Protocole QSMP")
@@ -111,5 +132,4 @@ if __name__ == "__main__":
     print(f"   OK : {okm.hex() == expected}")
 
     print("\n" + "=" * 60)
-
-#wikipedia version modified : - hardcoded sha-256 modified to hkdf-sha-512 and added tests
+"""

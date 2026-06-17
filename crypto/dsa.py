@@ -1,3 +1,10 @@
+
+from dataclasses import dataclass
+from importlib import util as importlib_util
+from oqs_load import oqs #post-quantum library liboqs 
+
+    # to have extended information about the signature : help(oqs.Signature)
+
 '''
 Digital signature algorithm
 ML - DSA - 65 protocol
@@ -6,62 +13,20 @@ ML - DSA - 65 protocol
 2. Signing          sig = Sign(sk, m)
 3. Verification     ok = Verify(pk, m, sig)
 '''
-
-from dataclasses import dataclass
-from importlib import util as importlib_util
-from pathlib import Path
-import sysconfig
-
-
-def _load_oqs_module():
-    """
-    Charge le bon module OQS.
-
-    Comme pour le module KEM, on contourne ici un conflit possible avec un
-    package tiers également nommé ``oqs``.
-    """
-    import oqs as imported_oqs
-
-    if hasattr(imported_oqs, "Signature"):
-        return imported_oqs
-
-    purelib = Path(sysconfig.get_paths()["purelib"])
-    candidate = purelib / "oqs" / "oqs.py"
-    if not candidate.exists():
-        raise ImportError(
-            "liboqs-python introuvable: le module 'oqs' importé n'expose pas "
-            "Signature et aucun fallback n'a été trouvé."
-        )
-
-    spec = importlib_util.spec_from_file_location("liboqs_python_compat_sig", candidate)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Impossible de charger le module OQS depuis {candidate}")
-
-    oqs_module = importlib_util.module_from_spec(spec)
-    spec.loader.exec_module(oqs_module)
-    return oqs_module
-
-
-oqs = _load_oqs_module()
-
-
-# ML-DSA-44 = NIST Level 2
-# ML-DSA-65 = NIST Level 3 (bon équilibre pour ce projet)
-# ML-DSA-87 = NIST Level 5
 DSA_ALGORITHM = "ML-DSA-65"
 
 
 @dataclass
 class DSAKeyPair:
     """
-    Paire de clés ML-DSA-65.
+    ML-DSA-65 Key Pair
 
-    Tailles FIPS 204 :
-      - public_key  : 1952 octets
-      - secret_key  : 4032 octets
+    FIPS 204 Sizes:
+      - public_key  : 1952 bytes
+      - secret_key  : 4032 bytes
     """
-    public_key: bytes
-    secret_key: bytes
+    public_key: bytes #to verify signatures
+    secret_key: bytes #to sign messages 
 
     def public_key_hex(self) -> str:
         return self.public_key.hex()
@@ -76,9 +41,8 @@ class DSAKeyPair:
 
 def generate_keypair() -> DSAKeyPair:
     """
-    Génère une paire de clés ML-DSA-65.
-
-    Utilisé pour la clé d'identité long terme de l'utilisateur.
+    Generate an ML-DSA-65 key pair (sk,pk)
+    Used for the user's long-term identity key
     """
     with oqs.Signature(DSA_ALGORITHM) as signer:
         public_key = signer.generate_keypair()
@@ -89,11 +53,11 @@ def generate_keypair() -> DSAKeyPair:
 
 def sign(message: bytes, secret_key: bytes) -> bytes:
     """
-    Signe un message avec la clé secrète ML-DSA.
+    Sign a message with the ML-DSA secret key
 
     Args:
-        message: message binaire à signer
-        secret_key: clé secrète ML-DSA-65
+        message: binary message to sign
+        secret_key: ML-DSA-65 secret key
     """
     _validate_secret_key(secret_key)
 
@@ -103,46 +67,43 @@ def sign(message: bytes, secret_key: bytes) -> bytes:
 
 def verify(message: bytes, signature: bytes, public_key: bytes) -> bool:
     """
-    Vérifie une signature ML-DSA.
+    Verify an ML-DSA signature.
 
-    Retourne False si le message, la signature ou la clé publique ne
-    correspondent pas.
+    Returns False if the message, signature, or public key do not match.
     """
     _validate_public_key(public_key)
     _validate_signature(signature)
 
-    with oqs.Signature(DSA_ALGORITHM) as verifier:
-        return verifier.verify(message, signature, public_key)
+    with oqs.Signature(DSA_ALGORITHM) as verify:
+        return verify.verify(message, signature, public_key)
 
 
 def sign_with_context(message: bytes, secret_key: bytes, context: bytes) -> bytes:
     """
-    Signe un message avec une chaîne de contexte.
+    Sign a message with a context string (message, signature, )
     """
     _validate_secret_key(secret_key)
 
-    with oqs.Signature(DSA_ALGORITHM, secret_key=secret_key) as signer:
-        return signer.sign_with_ctx_str(message, context)
+    with oqs.Signature(DSA_ALGORITHM, secret_key=secret_key) as sign:
+        #produces signature
+        return sign.sign_with_ctx_str(message, context) 
+        #signature = Sign(sk, context || message)
 
 
-def verify_with_context(
-    message: bytes,
-    signature: bytes,
-    context: bytes,
-    public_key: bytes,
-) -> bool:
+def verify_with_context(message: bytes, signature: bytes, context: bytes, public_key: bytes) -> bool:
     """
-    Vérifie une signature ML-DSA avec contexte.
+    Verify an ML-DSA signature with context
+    return true or false 
     """
     _validate_public_key(public_key)
     _validate_signature(signature)
 
-    with oqs.Signature(DSA_ALGORITHM) as verifier:
-        return verifier.verify_with_ctx_str(message, signature, context, public_key)
+    with oqs.Signature(DSA_ALGORITHM) as verify:
+        return verify.verify_with_ctx_str(message, signature, context, public_key)
 
 
 def dsa_info() -> dict:
-    """Retourne les paramètres de taille de ML-DSA-65."""
+    """Returns the size parameters for ML-DSA-65."""
     with oqs.Signature(DSA_ALGORITHM) as signer:
         d = signer.details
     return {
@@ -155,11 +116,11 @@ def dsa_info() -> dict:
         "supports_context_signing": d["supports_context_signing"],
     }
 
+# Validators and availability
 
 def is_available() -> bool:
-    """Vérifie que ML-DSA-65 est disponible dans liboqs."""
+    """Verify that ML-DSA-65 is available in liboqs."""
     return DSA_ALGORITHM in oqs.get_enabled_sig_mechanisms()
-
 
 def _validate_public_key(public_key: bytes) -> None:
     expected = dsa_info()["public_key_bytes"]
@@ -174,8 +135,8 @@ def _validate_secret_key(secret_key: bytes) -> None:
     expected = dsa_info()["secret_key_bytes"]
     if len(secret_key) != expected:
         raise ValueError(
-            f"Taille de clé secrète incorrecte : "
-            f"reçu {len(secret_key)} octets, attendu {expected}"
+            f"Wrong size of secret key : "
+            f"got {len(secret_key)} bytes, expected {expected}"
         )
 
 
@@ -186,3 +147,55 @@ def _validate_signature(signature: bytes) -> None:
             f"Taille de signature incorrecte : "
             f"reçu {len(signature)} octets, attendu {expected}"
         )
+
+"""
+if __name__ == "__main__":
+    print("=" * 60)
+    print("  ML-DSA-65 — QSMP Protocol")
+    print("=" * 60)
+
+    print("\nParameters :")
+    for key, value in dsa_info().items():
+        print(f"   {key:<28} {value}")
+
+    print(f"\nML-DSA-65 available: {is_available()}")
+
+    print("\nGenerating Alice's key pair...")
+    alice = generate_keypair()
+    print(f"   {alice}")
+
+    message = b"Quantum-safe handshake transcript"
+    print(f"\nMessage to sign: {message!r}")
+
+    print("\nClassic signature...")
+    signature = sign(message, alice.secret_key)
+    print(f"   signature[{len(signature)}B]={signature.hex()[:32]}...")
+
+    print("\nVerifying signature...")
+    valid = verify(message, signature, alice.public_key)
+    print(f"   Verification OK: {valid}")
+
+    tampered_message = b"Quantum-safe handshake transcripu"
+    tampered_valid = verify(tampered_message, signature, alice.public_key)
+    print("\nVerifying after modifying the message...")
+    print(f"   Verification OK: {tampered_valid}")
+
+    context = b"chat-session-1"
+    print(f"\nSignature with context: {context!r}")
+    ctx_signature = sign_with_context(message, alice.secret_key, context)
+    print(f"   signature_ctx[{len(ctx_signature)}B]={ctx_signature.hex()[:32]}...")
+
+    print("\nVerifying with correct context...")
+    ctx_valid = verify_with_context(message, ctx_signature, context, alice.public_key)
+    print(f"   Context verification OK: {ctx_valid}")
+
+    wrong_ctx = b"chat-session-2"
+    wrong_ctx_valid = verify_with_context(message, ctx_signature, wrong_ctx, alice.public_key)
+    print("\nVerifying with wrong context...")
+    print(f"   Context verification OK: {wrong_ctx_valid}")
+
+    print("\n" + "=" * 60)
+
+
+
+"""

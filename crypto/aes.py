@@ -9,7 +9,7 @@ AES-256-GCM symmetric encryption module.
 from dataclasses import dataclass
 import os
 
-from cryptography.exceptions import InvalidTag
+from cryptography.exceptions import InvalidTag # gcm authentication failure : when the ciphertext or the nonce or the aad is modified -> gcm authentication failure
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
@@ -40,13 +40,13 @@ class AESGCMCiphertext:
 ##----------
 
 def generate_key() -> bytes:
-    """Generate a random AES-256 key."""
+    """Generate a random AES-256 key"""
     return os.urandom(KEY_SIZE)
 
 
 def encrypt(key: bytes, plaintext: bytes, aad: bytes = b"") -> AESGCMCiphertext:
     """
-    Encrypt a message with AES-256-GCM.
+    Encrypt a message with AES-256-GCM
 
     Args:
         key: 32-byte symmetric key
@@ -55,9 +55,9 @@ def encrypt(key: bytes, plaintext: bytes, aad: bytes = b"") -> AESGCMCiphertext:
     """
 
     _validate_key(key)
-    nonce = os.urandom(NONCE_SIZE)
+    nonce = os.urandom(NONCE_SIZE) #random 12-bytes value. Against collision and replay attack
     aesgcm = AESGCM(key)
-    ciphertext = aesgcm.encrypt(nonce, plaintext, aad)
+    ciphertext = aesgcm.encrypt(nonce, plaintext, aad) #encrypt and add gcm tag to cipher and aad
     return AESGCMCiphertext(nonce=nonce, ciphertext=ciphertext)
 
 
@@ -88,17 +88,20 @@ def aes_info() -> dict:
 def _validate_key(key: bytes) -> None:
     if len(key) != KEY_SIZE:
         raise ValueError(
-            f"Taille de cle incorrecte : recu {len(key)} octets, attendu {KEY_SIZE}"
+            f"Size of key incorrect : got {len(key)} bytes, expected {KEY_SIZE}"
         )
 
 
 def _validate_nonce(nonce: bytes) -> None:
     if len(nonce) != NONCE_SIZE:
         raise ValueError(
-            f"Taille de nonce incorrecte : recu {len(nonce)} octets, attendu {NONCE_SIZE}"
+            f"incorrect size of nonce : got {len(nonce)} bytes, expected {NONCE_SIZE}"
         )
-# DEMO of encryption and decryption
 
+# --------------------------------        
+# DEMO of encryption and decryption
+# --------------------------------
+"""
 if __name__ == "__main__":
     print("=" * 60)
     print("  AES-256-GCM — Protocole QSMP")
@@ -127,7 +130,7 @@ if __name__ == "__main__":
 
     print("\nTest of detection of alteration...")
     tampered = bytearray(result.ciphertext)
-    tampered[0] ^= 0xFF
+    tampered[0] ^= 0xFF # modified the ciphertext
     try:
         decrypt(key, result.nonce, bytes(tampered), aad)
         print("   ERROR : alteration not detected")
@@ -135,3 +138,4 @@ if __name__ == "__main__":
         print("   OK : alteration detectee (InvalidTag)")
 
     print("\n" + "=" * 60)
+"""

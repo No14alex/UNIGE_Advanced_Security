@@ -8,7 +8,8 @@ import sys
 if __package__ is None or __package__ == "":
     sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from crypto import dsa, hkdf, kem
+from crypto import hkdf, kem
+from protocol import authentication
 
 
 PROTOCOL_VERSION = b"QSMP-1"
@@ -28,15 +29,32 @@ def _encode_parts(*parts: bytes) -> bytes:
 
 
 def _hash_bytes(data: bytes) -> bytes:
-    return hashlib.sha512(data).digest()
+    return hashlib.new(TRANSCRIPT_HASH, data).digest()
 
 
 @dataclass
 class Identity:
     user_id: str
-    identity_sig: dsa.DSAKeyPair
+    identity_sig: authentication.dsa.DSAKeyPair
     signed_prekey: kem.KEMKeyPair
     bundle_signature: bytes
+
+    @classmethod
+    def from_auth_record(cls, record: authentication.IdentityRecord) -> "Identity":
+        return cls(
+            user_id=record.user_id,
+            identity_sig=record.identity_sig,
+            signed_prekey=record.signed_prekey,
+            bundle_signature=record.signed_prekey_signature,
+        )
+
+    def to_auth_record(self) -> authentication.IdentityRecord:
+        return authentication.IdentityRecord(
+            user_id=self.user_id,
+            identity_sig=self.identity_sig,
+            signed_prekey=self.signed_prekey,
+            signed_prekey_signature=self.bundle_signature,
+        )
 
 
 @dataclass
@@ -45,6 +63,23 @@ class PreKeyBundle:  # what will be published on the server
     identity_public_key: bytes
     signed_prekey_public_key: bytes
     bundle_signature: bytes
+
+    @classmethod
+    def from_auth_bundle(cls, bundle: authentication.SignedPreKeyBundle) -> "PreKeyBundle":
+        return cls(
+            user_id=bundle.user_id,
+            identity_public_key=bundle.identity_public_key,
+            signed_prekey_public_key=bundle.signed_prekey_public_key,
+            bundle_signature=bundle.signed_prekey_signature,
+        )
+
+    def to_auth_bundle(self) -> authentication.SignedPreKeyBundle:
+        return authentication.SignedPreKeyBundle(
+            user_id=self.user_id,
+            identity_public_key=self.identity_public_key,
+            signed_prekey_public_key=self.signed_prekey_public_key,
+            signed_prekey_signature=self.bundle_signature,
+        )
 
 
 @dataclass
@@ -108,69 +143,52 @@ class SessionState:  # output of handshake
 
 def create_identity(user_id: str) -> Identity:
     """
-    Creates the keys for the protoype 
+    Creates the keys
     - IK : long-term identity signature key pair 
     - SPK : signed medium-term pre-key pair to initiate new sessions
     """
-
-    identity_sig = dsa.generate_keypair()
-    signed_prekey = kem.generate_keypair()
-    bundle_payload = _bundle_payload(user_id, signed_prekey.public_key)
-    bundle_signature = dsa.sign(bundle_payload, identity_sig.secret_key)
-    return Identity(
-        user_id=user_id,
-        identity_sig=identity_sig,
-        signed_prekey=signed_prekey,
-        bundle_signature=bundle_signature,
-    )
+    return Identity.from_auth_record(authentication.create_identity_record(user_id))
 
 # extracts the public part of the boundle
 
 
 def export_prekey_bundle(identity: Identity) -> PreKeyBundle:
-    return PreKeyBundle(
-        user_id=identity.user_id,
-        identity_public_key=identity.identity_sig.public_key,
-        signed_prekey_public_key=identity.signed_prekey.public_key,
-        bundle_signature=identity.bundle_signature,
+    return PreKeyBundle.from_auth_bundle(
+        authentication.export_signed_prekey_bundle(identity.to_auth_record())
     )
 
 
 def verify_prekey_bundle(bundle: PreKeyBundle) -> bool:
-    payload = _bundle_payload(bundle.user_id, bundle.signed_prekey_public_key)
-    return dsa.verify(payload, bundle.bundle_signature, bundle.identity_public_key)
+    return authentication.verify_signed_prekey_bundle(bundle.to_auth_bundle())
 
 
 """ 
-
 start the handshake from Alice's side
 1. verify Bob's boundle 
 2. Alice creates a short-term KEM 
 3. generation of a nonce 
 4. construction and signature of payload 
 """
-
-
 def initiate_handshake(local_identity: Identity, peer_bundle: PreKeyBundle) -> tuple[HandshakeInitiatorState, HandshakeInit]:
     if not verify_prekey_bundle(peer_bundle):
         raise ValueError("Le prekey bundle is invalid")
 
     ephemeral = kem.generate_keypair()
     nonce = os.urandom(32)
-    payload = _init_payload(
-        local_identity.user_id,
+    signed_payload = authentication.sign_authenticated_payload(
+        local_identity.to_auth_record(),
         peer_bundle.user_id,
+        b"handshake-init",
         ephemeral.public_key,
         nonce,
     )
-    signature = dsa.sign(payload, local_identity.identity_sig.secret_key)
     init = HandshakeInit(
         version=PROTOCOL_VERSION,
         sender_id=local_identity.user_id,
         receiver_id=peer_bundle.user_id,
         ephemeral_kem_public_key=ephemeral.public_key,
         nonce=nonce,
-        signature=signature,
+        signature=signed_payload.signature,
     )
     state = HandshakeInitiatorState(
         local_identity=local_identity,
@@ -191,35 +209,36 @@ Bob responds to Alice
 6. sign the response 
 
 """
-
-
 def respond_handshake(
     local_identity: Identity,
     peer_identity_public_key: bytes,
     init_message: HandshakeInit,
 ) -> tuple[HandshakeResponderState, HandshakeReply]:
-    payload = _init_payload(
+    ok = authentication.verify_authenticated_payload(
         init_message.sender_id,
         init_message.receiver_id,
+        b"handshake-init",
+        init_message.signature,
+        peer_identity_public_key,
         init_message.ephemeral_kem_public_key,
         init_message.nonce,
     )
-    if not dsa.verify(payload, init_message.signature, peer_identity_public_key):
+    if not ok:
         raise ValueError("The signature of HANDSHAKE_INIT is invalid")
 
     ephemeral = kem.generate_keypair()
     nonce = os.urandom(32)
     encapsulated = kem.encapsulate(init_message.ephemeral_kem_public_key)
-    reply_payload = _reply_payload(
+    signed_payload = authentication.sign_authenticated_payload(
+        local_identity.to_auth_record(),
         init_message.sender_id,
-        init_message.receiver_id,
+        b"handshake-reply",
         init_message.ephemeral_kem_public_key,
         ephemeral.public_key,
         init_message.nonce,
         nonce,
         encapsulated.ciphertext,
     )
-    signature = dsa.sign(reply_payload, local_identity.identity_sig.secret_key)
     reply = HandshakeReply(
         version=PROTOCOL_VERSION,
         sender_id=local_identity.user_id,
@@ -227,7 +246,7 @@ def respond_handshake(
         ephemeral_kem_public_key=ephemeral.public_key,
         ciphertext_to_initiator=encapsulated.ciphertext,
         nonce=nonce,
-        signature=signature,
+        signature=signed_payload.signature,
     )
     state = HandshakeResponderState(
         local_identity=local_identity,
@@ -247,13 +266,10 @@ Finalization from Alice
 3. Alice verifies Bob's signature 
 4. decapsulate the ciphertext received 
 5. encapsulate public KEM key of bob -> creates ciphertext for Bob & shared secret 
-- 
+-
 6. calculate hash and mix the two secrets 
 
-
 """
-
-
 def finalize_initiator(
     state: HandshakeInitiatorState,
     reply: HandshakeReply,
@@ -261,16 +277,19 @@ def finalize_initiator(
     if reply.sender_id != state.peer_bundle.user_id:
         raise ValueError("The responder doesn't correspond to the boundle ")
 
-    payload = _reply_payload(
-        state.init_message.sender_id,
-        state.init_message.receiver_id,
+    ok = authentication.verify_authenticated_payload(
+        reply.sender_id,
+        state.local_identity.user_id,
+        b"handshake-reply",
+        reply.signature,
+        state.peer_bundle.identity_public_key,
         state.init_message.ephemeral_kem_public_key,
         reply.ephemeral_kem_public_key,
         state.init_message.nonce,
         reply.nonce,
         reply.ciphertext_to_initiator,
     )
-    if not dsa.verify(payload, reply.signature, state.peer_bundle.identity_public_key):
+    if not ok:
         raise ValueError("The signature is invalid")
 
     responder_secret = kem.decapsulate(
@@ -301,7 +320,6 @@ Finalization from Bob
 2. calcualte the hash and derive the two secrets 
 """
 
-
 def finalize_responder(
     state: HandshakeResponderState,
     finish: HandshakeFinish,
@@ -327,8 +345,6 @@ def finalize_responder(
 # ---------------------
 # ----- DEMO of handshake
 # ----------------------
-
-
 def run_demo_handshake(alice_id: str = "alice", bob_id: str = "bob") -> dict:
     alice = create_identity(alice_id)
     bob = create_identity(bob_id)
@@ -357,44 +373,7 @@ def run_demo_handshake(alice_id: str = "alice", bob_id: str = "bob") -> dict:
         ),
     }
 
-
-def _bundle_payload(user_id: str, signed_prekey_public_key: bytes) -> bytes:
-    return _encode_parts(PROTOCOL_VERSION, b"bundle", user_id.encode(), signed_prekey_public_key)
-
-
-def _init_payload(sender_id: str, receiver_id: str, ephemeral_pub: bytes, nonce: bytes) -> bytes:
-    return _encode_parts(
-        PROTOCOL_VERSION,
-        b"init",
-        sender_id.encode(),
-        receiver_id.encode(),
-        ephemeral_pub,
-        nonce,
-    )
-
-
-def _reply_payload(
-    sender_id: str,
-    receiver_id: str,
-    initiator_ephemeral_pub: bytes,
-    responder_ephemeral_pub: bytes,
-    initiator_nonce: bytes,
-    responder_nonce: bytes,
-    ciphertext_to_initiator: bytes,
-) -> bytes:
-    return _encode_parts(
-        PROTOCOL_VERSION,
-        b"reply",
-        sender_id.encode(),
-        receiver_id.encode(),
-        initiator_ephemeral_pub,
-        responder_ephemeral_pub,
-        initiator_nonce,
-        responder_nonce,
-        ciphertext_to_initiator,
-    )
-
-
+#transcript_hash = SHA512(all handshake data)
 def _transcript_hash(init_message: HandshakeInit, reply: HandshakeReply) -> bytes:
     transcript = _encode_parts(
         init_message.version,
@@ -413,7 +392,15 @@ def _transcript_hash(init_message: HandshakeInit, reply: HandshakeReply) -> byte
     )
     return _hash_bytes(transcript)
 
+"""
+Take the two shared secrets + the transcript hash -> compute session keys
 
+2 secrets ML-KEM
++ transcript_hash
++ HKDF
+=
+root_key + chain keys + session_id
+"""
 def _derive_session(
     *,
     local_user_id: str,
@@ -423,18 +410,20 @@ def _derive_session(
     transcript_hash: bytes,
     initiator_is_local: bool,
 ) -> SessionState:
-    ikm = shared_secret_ab + shared_secret_ba
+
+    #session depends on the two exchanges
+    ikm = shared_secret_ab + shared_secret_ba 
     key_material = hkdf.hkdf(
         salt=transcript_hash,
         ikm=ikm,
         info=b"qsmp-handshake-v1",
-        length=4 * CHAIN_KEY_SIZE,
+        length=4 * CHAIN_KEY_SIZE,  # 4 keys of 32 bytes = 128 bytes
         hash_name=TRANSCRIPT_HASH,
     )
-    root_key = key_material[:CHAIN_KEY_SIZE]
-    initiator_send = key_material[CHAIN_KEY_SIZE:2 * CHAIN_KEY_SIZE]
-    responder_send = key_material[2 * CHAIN_KEY_SIZE:3 * CHAIN_KEY_SIZE]
-    session_id = key_material[3 * CHAIN_KEY_SIZE:]
+    root_key = key_material[:CHAIN_KEY_SIZE]  # [0:32]
+    initiator_send = key_material[CHAIN_KEY_SIZE:2 * CHAIN_KEY_SIZE]  # [32:64]
+    responder_send = key_material[2 * CHAIN_KEY_SIZE:3 * CHAIN_KEY_SIZE]  # [64:96]
+    session_id = key_material[3 * CHAIN_KEY_SIZE:]  # [96:128]
 
     if initiator_is_local:
         send_chain_key = initiator_send
