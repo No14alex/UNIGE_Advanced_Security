@@ -17,7 +17,7 @@ The prototype implements:
 - **MITM visibility** and **replay** simulations
 - a **classical vs post-quantum benchmark**
 
-The goal is not to reproduce the full complexity of Signal, but to provide a coherent research prototype that demonstrates:
+The goal is to provide a coherent research prototype that demonstrates:
 
 - authenticated session establishment
 - end-to-end encrypted message exchange
