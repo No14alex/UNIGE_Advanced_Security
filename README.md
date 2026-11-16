@@ -124,22 +124,6 @@ The evaluation assumes that:
 ├── requirements.txt
 └── README.md
 ```
-
-## Important note about `liboqs_src/`
-
-The runtime code does **not** depend on the local `liboqs_src/` directory.
-
-At runtime, the project uses:
-
-- the system-installed **liboqs** shared library
-- the Python package **liboqs-python**
-
-So:
-
-- `liboqs_src/` is useful as local reference material
-- it is **not required** to run the project
-- it can usually be excluded from a GitHub release archive or academic submission bundle
-
 ## Installation
 
 ### 1. Install the `liboqs` system library
