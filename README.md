@@ -287,17 +287,9 @@ A minimal runnable archive usually only needs:
 - `conftest.py`
 - `oqs_load.py`
 
-It is generally safe to exclude:
-
-- `.git/`
-- `.venv/`, `.venv-rest/`
-- `__pycache__/`, `.pytest_cache/`, `*.pyc`
-- `.DS_Store`
-- `liboqs_src/`
-
 ## License / academic context
 
 This repository was developed as an academic project for:
 
 - **Course**: Advanced Security
-- **Institution**: University of Geneva
+- **Institution**: University of Geneva 2025
